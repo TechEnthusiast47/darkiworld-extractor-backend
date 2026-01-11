@@ -61,23 +61,49 @@ def get_animes_from_page(page_url, max_results=30):
                 else:
                     anime_data['url'] = ''
                 
-                # Saison (peut être absente)
+                # SAISON - CORRECTION APPLIQUÉE ICI
                 season_tag = container.find(class_=re.compile(r'sai'))
-                anime_data['season'] = season_tag.text.strip() if season_tag else ''
+                if season_tag:
+                    # Nettoyer les tabulations et sauts de ligne
+                    season_text = season_tag.get_text()
+                    # Supprimer tous les \t et \n
+                    season_text = re.sub(r'[\t\n]+', ' ', season_text)
+                    # Supprimer les espaces multiples
+                    season_text = re.sub(r'\s+', ' ', season_text)
+                    # Nettoyer les espaces au début et à la fin
+                    anime_data['season'] = season_text.strip()
+                else:
+                    anime_data['season'] = ''
                 
                 # Version (VF/VOSTFR)
                 version_match = re.search(r'Version[^>]*>([^<]+)', str(container))
                 anime_data['version'] = version_match.group(1).strip() if version_match else ''
                 
-                # Description
+                # DESCRIPTION - CORRECTION APPLIQUÉE ICI
                 desc_tag = container.find(class_=re.compile(r'desc'))
                 if desc_tag:
                     full_text = desc_tag.get_text(strip=True)
-                    # Essayer d'extraire le synopsis
+                    
+                    # CORRECTION: Chercher l'année séparément
+                    year_match = re.search(r'\b(19|20)\d{2}\b', full_text)
+                    anime_data['year'] = year_match.group(0) if year_match else ''
+                    
+                    # CORRECTION: Chercher le vrai synopsis
+                    # D'abord essayer de trouver "Synopsis"
                     synopsis_match = re.search(r'Synopsis[:\s]*(.+)', full_text, re.IGNORECASE)
-                    anime_data['description'] = synopsis_match.group(1).strip() if synopsis_match else full_text[:150]
+                    if synopsis_match:
+                        anime_data['description'] = synopsis_match.group(1).strip()
+                    else:
+                        # Si pas de synopsis, prendre tout sauf l'année au début
+                        # Enlever l'année si c'est le premier élément
+                        cleaned_text = re.sub(r'^\s*(19|20)\d{2}\s*[-:]?\s*', '', full_text)
+                        if cleaned_text and len(cleaned_text) > 10:
+                            anime_data['description'] = cleaned_text[:100] + '...' if len(cleaned_text) > 100 else cleaned_text
+                        else:
+                            anime_data['description'] = 'Description non disponible'
                 else:
                     anime_data['description'] = ''
+                    anime_data['year'] = ''
                 
                 # Nettoyer et compléter les URLs
                 if anime_data['thumbnail'] and anime_data['thumbnail'].startswith('/'):
