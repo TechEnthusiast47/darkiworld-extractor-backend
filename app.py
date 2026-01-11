@@ -8,7 +8,7 @@ app = Flask(__name__)
 CORS(app)  # Permet à votre site web d'appeler cette API
 
 # Configuration - À ADAPTER SI LE SITE A CHANGÉ
-BASE_URL = "https://votre-site-d-anime-actuel.com"  # ⚠️ REMPLACEZ CE LIEN
+BASE_URL = "https://french-anime.com/"  # ⚠️ REMPLACEZ CE LIEN
 
 @app.route('/api/animes', methods=['GET'])
 def api_get_animes():
