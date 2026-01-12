@@ -2,6 +2,8 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from my_scraper import get_animes_from_page, get_episodes_from_anime, get_genres_from_page
+# AJOUTER CET IMPORT :
+from extractors import extract_video_url
 import json
 
 app = Flask(__name__)
@@ -90,6 +92,60 @@ def api_get_genres():
     result = get_genres_from_page(BASE_URL)
     return jsonify(result)
 
+# ============ NOUVELLE ROUTE D'EXTRACTION ============
+
+@app.route('/api/extract', methods=['GET'])
+def api_extract_video():
+    """
+    Extrait le lien vidéo direct depuis une URL d'embed
+    Usage: /api/extract?url=URL_VIDMOLY_OU_AUTRE
+    
+    Retourne:
+    {
+        "success": true,
+        "url": "https://lien-direct.mp4",
+        "method": "kodi_pattern",
+        "extractor": "vidmoly"
+    }
+    """
+    embed_url = request.args.get('url', '')
+    
+    if not embed_url:
+        return jsonify({
+            'success': False,
+            'error': 'Paramètre "url" manquant'
+        }), 400
+    
+    # Utiliser notre système d'extraction
+    result = extract_video_url(embed_url)
+    
+    return jsonify(result)
+
+# Route spécifique pour tests
+@app.route('/api/extract/test', methods=['GET'])
+def api_extract_test():
+    """
+    Route de test pour l'extraction
+    """
+    test_cases = [
+        "https://vidmoly.net/embed-example",  # Remplacer par un vrai exemple
+        "https://direct-link.mp4",
+    ]
+    
+    results = []
+    for test_url in test_cases:
+        result = extract_video_url(test_url)
+        results.append({
+            'input': test_url,
+            'output': result
+        })
+    
+    return jsonify({
+        'test': True,
+        'results': results,
+        'extractors_loaded': ['VidmolyExtractor', 'DirectExtractor']
+    })
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """
@@ -98,8 +154,9 @@ def health_check():
     return jsonify({
         'status': 'online',
         'service': 'anime-scraper-api',
-        'version': '1.0',
-        'base_url': BASE_URL
+        'version': '2.0',  # Version augmentée
+        'base_url': BASE_URL,
+        'features': ['scraping', 'video_extraction']
     })
 
 @app.route('/')
@@ -112,11 +169,12 @@ def home():
             '/api/animes': 'Liste des animés par catégorie (paramètres: category, page)',
             '/api/search': 'Recherche d\'animés (paramètre: q)',
             '/api/anime/details': 'Détails d\'un animé (paramètre: url)',
+            '/api/extract': 'Extraction de lien vidéo direct (paramètre: url)',  # NOUVEAU
             '/api/genres': 'Liste des genres disponibles',
             '/api/health': 'Vérification du statut de l\'API'
         },
         'categories': ['news', 'vf', 'vostfr', 'films'],
-        'example': '/api/animes?category=vf&page=1'
+        'example': '/api/extract?url=https://vidmoly.net/embed-xyz123'
     }
     return jsonify(endpoints)
 
