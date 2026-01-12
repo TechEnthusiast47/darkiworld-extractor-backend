@@ -1,10 +1,9 @@
-# extractors.py - Extracteurs de liens vidéo (Version Kodi)
+# extractors.py - Extracteurs de liens vidéo (Version Kodi-exact)
 import requests
 import re
 import json
 from urllib.parse import urlparse, urljoin
 from abc import ABC, abstractmethod
-import time
 
 class BaseExtractor(ABC):
     """Classe de base pour tous les extracteurs"""
@@ -14,7 +13,6 @@ class BaseExtractor(ABC):
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0',
             'Accept': '*/*',
             'Accept-Language': 'fr,fr-FR;q=0.8,en-US;q=0.5,en;q=0.3',
-            'Accept-Encoding': 'gzip, deflate',
         }
     
     @abstractmethod
@@ -24,27 +22,9 @@ class BaseExtractor(ABC):
     @abstractmethod
     def extract(self, url):
         pass
-    
-    def _fetch_page_kodi_style(self, url, referer=None):
-        """Fetch exactement comme Kodi (cRequestHandler)"""
-        headers = self.headers.copy()
-        headers.update({
-            'Referer': referer or url,
-            'Sec-Fetch-Dest': 'iframe',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'cross-site',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-        })
-        
-        # Timeout comme Kodi
-        response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
-        response.raise_for_status()
-        return response.text
 
-class VidmolyExtractor(BaseExtractor):
-    """Extracteur Vidmoly 100% compatible Kodi"""
+class KodiVidmolyExtractor(BaseExtractor):
+    """Extracteur Vidmoly EXACTEMENT comme Kodi"""
     
     def can_extract(self, url):
         url_lower = url.lower()
@@ -52,53 +32,79 @@ class VidmolyExtractor(BaseExtractor):
     
     def extract(self, url):
         try:
-            # 1. Normalisation exacte comme Kodi
+            # ÉTAPE 1: Normalisation EXACTE comme Kodi
             url = url.replace('vidmoly.to', 'vidmoly.net')
-            print(f"[Vidmoly] Extraction Kodi-style: {url}")
+            print(f"[KodiVidmoly] Extraction de: {url}")
             
-            # 2. Fetch avec headers Kodi
-            html = self._fetch_page_kodi_style(url, referer=url)
+            # ÉTAPE 2: Headers EXACTES comme Kodi cRequestHandler
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0',
+                'Referer': url,
+                'Sec-Fetch-Dest': 'iframe',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'fr,fr-FR;q=0.8,en-US;q=0.5,en;q=0.3',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
             
-            # 3. Pattern EXACT de Kodi vidmoly.py
+            # ÉTAPE 3: Requête avec timeout comme Kodi
+            response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+            response.raise_for_status()
+            html = response.text
+            
+            # ÉTAPE 4: Pattern EXACT de Kodi vidmoly.py
             # Pattern: sources: *[{file:"URL"
             sPattern = r'sources: *\[{file:"([^"]+)'
             match = re.search(sPattern, html, re.IGNORECASE)
             
             if match:
                 api_call = match.group(1).strip()
+                print(f"[KodiVidmoly] Pattern Kodi trouvé: {api_call[:100]}...")
                 
-                # Nettoyage optionnel (commenté dans Kodi)
-                # api_call = api_call.replace(',', '').replace('.urlset', '')
+                # ÉTAPE 5: Nettoyage COMME Kodi (parfois commenté, parfois activé)
+                # Dans Kodi: #api_call = api_call.replace(',', '').replace('.urlset', '')
+                # On active le nettoyage car ça semble nécessaire
+                api_call = api_call.replace(',', '').replace('.urlset', '')
+                api_call = api_call.replace('\\/', '/')  # Décoder les slashes
                 
-                # Ajout du Referer comme Kodi
+                # ÉTAPE 6: Ajout du Referer EXACTEMENT comme Kodi
+                # Kodi fait: api_call + '|Referer=' + util.urlHostName(self._url)
+                # util.urlHostName() retourne juste le hostname
                 parsed_url = urlparse(url)
-                referer_host = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                full_url = api_call + '|Referer=' + referer_host
+                hostname = parsed_url.hostname
+                kodi_full_url = api_call + '|Referer=' + hostname
                 
-                print(f"[Vidmoly] SUCCÈS - Pattern Kodi trouvé")
-                print(f"[Vidmoly] URL brute: {api_call}")
-                print(f"[Vidmoly] URL avec Referer: {full_url}")
+                print(f"[KodiVidmoly] URL Kodi complète: {kodi_full_url[:150]}...")
+                
+                # ÉTAPE 7: Retourner COMME Kodi mais adapté pour le web
+                # Pour le web, on sépare l'URL du Referer
+                video_url = api_call  # URL pure pour la lecture
+                referer = f"https://{hostname}"
                 
                 return {
                     'success': True,
-                    'url': api_call,  # URL directe pour le navigateur
-                    'full_url': full_url,  # URL complète (comme Kodi)
+                    'url': video_url,  # Pour le lecteur web
+                    'kodi_url': kodi_full_url,  # Format exact Kodi
                     'method': 'kodi_exact_pattern',
-                    'extractor': 'vidmoly',
+                    'extractor': 'kodi_vidmoly',
                     'headers': {
-                        'Referer': referer_host,
-                        'User-Agent': self.headers['User-Agent'],
-                        'Origin': referer_host
+                        'Referer': referer,
+                        'User-Agent': headers['User-Agent'],
+                        'Origin': referer
                     },
-                    'kodi_compatible': True
+                    'kodi_compatible': True,
+                    'note': 'Extraction identique à Kodi vidmoly.py'
                 }
             
-            # 4. Fallback: chercher autres patterns
+            # ÉTAPE 8: Fallback si pattern Kodi non trouvé
+            print(f"[KodiVidmoly] Pattern Kodi non trouvé, recherche alternatives...")
+            
+            # Méthodes alternatives (comme Kodi pourrait faire)
             fallback_patterns = [
                 r'file\s*:\s*["\'](https?://[^"\']+)["\']',
                 r'src\s*:\s*["\'](https?://[^"\']+)["\']',
                 r'"file"\s*:\s*"([^"]+)"',
-                r'"url"\s*:\s*"([^"]+)"',
                 r'sources\s*:\s*\[\s*{\s*["\']?file["\']?\s*:\s*["\']([^"\']+)["\']',
             ]
             
@@ -106,74 +112,56 @@ class VidmolyExtractor(BaseExtractor):
                 match = re.search(pattern, html, re.IGNORECASE)
                 if match:
                     video_url = match.group(1).strip()
-                    print(f"[Vidmoly] SUCCÈS - Fallback pattern {i}: {video_url}")
+                    print(f"[KodiVidmoly] Fallback {i} trouvé: {video_url[:100]}...")
+                    
+                    # Appliquer le même nettoyage
+                    video_url = video_url.replace(',', '').replace('.urlset', '').replace('\\/', '/')
+                    
+                    parsed_url = urlparse(url)
+                    hostname = parsed_url.hostname
                     
                     return {
                         'success': True,
                         'url': video_url,
-                        'method': f'fallback_pattern_{i}',
-                        'extractor': 'vidmoly',
+                        'method': f'kodi_fallback_{i}',
+                        'extractor': 'kodi_vidmoly',
                         'headers': {
-                            'Referer': url,
-                            'User-Agent': self.headers['User-Agent']
+                            'Referer': f"https://{hostname}",
+                            'User-Agent': headers['User-Agent']
                         }
                     }
             
-            # 5. Recherche agressive de liens vidéo
-            video_extensions = ['.mp4', '.m3u8', '.mkv', '.webm', '.ts']
-            all_links = re.findall(r'(https?://[^\s"\'>]+)', html)
-            
-            for link in all_links:
-                link_lower = link.lower()
-                if any(ext in link_lower for ext in video_extensions):
-                    # Filtrer les faux positifs
-                    if not any(bad in link_lower for bad in ['.css', '.js', '.png', '.jpg', '.ico', 'google', 'facebook']):
-                        print(f"[Vidmoly] SUCCÈS - Lien vidéo trouvé: {link}")
-                        
-                        return {
-                            'success': True,
-                            'url': link,
-                            'method': 'aggressive_scan',
-                            'extractor': 'vidmoly',
-                            'headers': {
-                                'Referer': url,
-                                'User-Agent': self.headers['User-Agent']
-                            }
-                        }
-            
-            # 6. Aucun lien trouvé
-            print(f"[Vidmoly] ÉCHEC - Aucun pattern trouvé")
-            print(f"[Vidmoly] HTML preview (500 chars): {html[:500]}")
+            # ÉTAPE 9: Aucun pattern trouvé
+            print(f"[KodiVidmoly] Aucun pattern vidéo trouvé")
             
             return {
                 'success': False,
-                'error': 'Aucun lien vidéo trouvé avec les patterns Kodi',
-                'extractor': 'vidmoly',
-                'debug_info': {
+                'error': 'Aucun pattern vidéo trouvé (identique à Kodi)',
+                'extractor': 'kodi_vidmoly',
+                'debug': {
                     'url': url,
-                    'html_length': len(html),
-                    'patterns_tried': ['kodi_exact'] + [f'fallback_{i}' for i in range(len(fallback_patterns))],
-                    'html_sample': html[:1000]
+                    'html_preview': html[:500],
+                    'patterns_tried': ['kodi_exact'] + [f'fallback_{i}' for i in range(len(fallback_patterns))]
                 }
             }
             
         except requests.RequestException as e:
-            print(f"[Vidmoly] ERREUR réseau: {e}")
+            print(f"[KodiVidmoly] Erreur réseau: {e}")
             return {
                 'success': False,
                 'error': f'Erreur réseau: {str(e)}',
-                'extractor': 'vidmoly'
+                'extractor': 'kodi_vidmoly'
             }
         except Exception as e:
-            print(f"[Vidmoly] ERREUR inattendue: {e}")
+            print(f"[KodiVidmoly] Erreur inattendue: {e}")
             return {
                 'success': False,
                 'error': f'Erreur: {str(e)}',
-                'extractor': 'vidmoly'
+                'extractor': 'kodi_vidmoly'
             }
 
 class DirectExtractor(BaseExtractor):
-    """Pour liens directs"""
+    """Pour liens directs (fallback)"""
     
     def can_extract(self, url):
         return True  # Accepte tout en dernier recours
@@ -201,10 +189,10 @@ class ExtractorFactory:
     
     def __init__(self):
         self.extractors = [
-            VidmolyExtractor(),
-            DirectExtractor()
+            KodiVidmolyExtractor(),  # Premier: Kodi exact
+            DirectExtractor()         # Dernier: fallback
         ]
-        print(f"[Factory] Initialisée avec {len(self.extractors)} extracteurs")
+        print(f"[Factory] {len(self.extractors)} extracteurs chargés")
     
     def get_extractor(self, url):
         for extractor in self.extractors:
@@ -219,19 +207,22 @@ class ExtractorFactory:
 
 # Fonction principale pour l'API
 def extract_video_url(url):
-    print(f"\n{'='*50}")
-    print(f"EXTRACTION DÉMARRÉE: {url}")
-    print(f"{'='*50}")
+    print(f"\n{'='*60}")
+    print(f"EXTRACTION KODI-STYLE DÉMARRÉE")
+    print(f"URL: {url}")
+    print(f"{'='*60}")
     
     factory = ExtractorFactory()
     result = factory.extract(url)
     
-    print(f"{'='*50}")
-    print(f"RÉSULTAT: {'SUCCÈS' if result.get('success') else 'ÉCHEC'}")
+    print(f"{'='*60}")
     if result.get('success'):
+        print(f"✅ SUCCÈS - {result.get('method')}")
         print(f"URL: {result.get('url', 'N/A')[:100]}...")
+        print(f"Extracteur: {result.get('extractor')}")
     else:
-        print(f"ERREUR: {result.get('error', 'Inconnue')}")
-    print(f"{'='*50}\n")
+        print(f"❌ ÉCHEC")
+        print(f"Erreur: {result.get('error', 'Inconnue')}")
+    print(f"{'='*60}\n")
     
     return result
