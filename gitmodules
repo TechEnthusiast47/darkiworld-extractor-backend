@@ -1,0 +1,3 @@
+[submodule "kodi-addons"]
+    path = kodi-addons
+    url = https://github.com/TON_PSEUDO_GITHUB/venom-xbmc-addons
