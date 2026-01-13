@@ -1,12 +1,8 @@
-Voici tout le fichier app.py mis à jour avec la route /check-kodi ajoutée au bon endroit :
-
-```python
 # app.py - API Flask pour votre site d'animés (avec extraction Kodi)
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from my_scraper import get_animes_from_page, get_episodes_from_anime, get_genres_from_page
 from extractors import extract_video_url, ExtractorFactory, KodiVidmolyExtractor
-import json
 
 app = Flask(__name__)
 CORS(app)  # Permet à votre site web d'appeler cette API
@@ -228,16 +224,3 @@ if __name__ == '__main__':
     print("📖 Pattern Kodi: sources: *[{file:\"([^\"]+)\"")
     print("🔗 Test: /api/extract/test")
     app.run(debug=True, host='0.0.0.0', port=5000)
-```
-
----
-
-Remplace tout ton app.py par ce code, puis commit et push.
-
-Ensuite, attends que Render déploie et teste :
-
-```
-https://ton-api.onrender.com/check-kodi
-```
-
-Si kodi_addons_exists est false, on passera à l’étape suivante. 🚀
