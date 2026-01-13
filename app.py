@@ -1,3 +1,6 @@
+Voici tout le fichier app.py mis à jour avec la route /check-kodi ajoutée au bon endroit :
+
+```python
 # app.py - API Flask pour votre site d'animés (avec extraction Kodi)
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -162,6 +165,21 @@ def api_extract_debug():
     
     return jsonify(debug_info)
 
+# ============ VÉRIFICATION KODI (nouveau) ============
+
+@app.route('/check-kodi')
+def check_kodi():
+    import os
+    path = os.path.join(os.path.dirname(__file__), 'kodi-addons')
+    exists = os.path.exists(path)
+    return {
+        'kodi_addons_exists': exists,
+        'path': path,
+        'files': os.listdir(path) if exists else []
+    }
+
+# ============ HEALTH CHECK ============
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     return jsonify({
@@ -188,12 +206,14 @@ def home():
             '/api/extract/test': 'Test extraction (url optionnel)',
             '/api/extract/debug': 'Debug extraction (url)',
             '/api/genres': 'Genres disponibles',
+            '/check-kodi': 'Vérifie si Kodi est installé (nouveau)',
             '/api/health': 'Statut API'
         },
         'examples': {
             'extraction': '/api/extract?url=https://vidmoly.net/embed-xxx',
             'kodi_exact': '/api/extract/kodi?url=https://vidmoly.net/embed-xxx',
-            'debug': '/api/extract/debug?url=https://vidmoly.net/embed-xxx'
+            'debug': '/api/extract/debug?url=https://vidmoly.net/embed-xxx',
+            'check_kodi': '/check-kodi'
         }
     })
 
@@ -208,3 +228,16 @@ if __name__ == '__main__':
     print("📖 Pattern Kodi: sources: *[{file:\"([^\"]+)\"")
     print("🔗 Test: /api/extract/test")
     app.run(debug=True, host='0.0.0.0', port=5000)
+```
+
+---
+
+Remplace tout ton app.py par ce code, puis commit et push.
+
+Ensuite, attends que Render déploie et teste :
+
+```
+https://ton-api.onrender.com/check-kodi
+```
+
+Si kodi_addons_exists est false, on passera à l’étape suivante. 🚀
