@@ -1,226 +1,304 @@
-# app.py - API Flask pour votre site d'animés (avec extraction Kodi)
+# app.py - API Flask pour extraction vidéo (Kodi + système actuel)
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from my_scraper import get_animes_from_page, get_episodes_from_anime, get_genres_from_page
-from extractors import extract_video_url, ExtractorFactory, KodiVidmolyExtractor
+import os
+import sys
+import subprocess
+import importlib.util
 
 app = Flask(__name__)
-CORS(app)  # Permet à votre site web d'appeler cette API
+CORS(app)
 
-# Configuration
-BASE_URL = "https://french-anime.com/"
+# ============ CHARGEMENT KODI (silencieux) ============
 
-# ============ ROUTES PRINCIPALES (existantes) ============
+def setup_kodi():
+    """Charge les extracteurs Kodi si disponibles"""
+    kodi_extractors = {}
+    
+    try:
+        # 1. Télécharger Kodi si absent
+        kodi_path = os.path.join(os.path.dirname(__file__), 'kodi-addons')
+        if not os.path.exists(kodi_path):
+            print("📥 Tentative de téléchargement Kodi...")
+            try:
+                subprocess.run(['git', 'submodule', 'update', '--init', '--recursive'], 
+                             check=True, capture_output=True, timeout=60)
+                print("✅ Kodi téléchargé")
+            except:
+                # Fallback: clone direct
+                repo_url = "https://github.com/TechEnthusiast47/venom-xbmc-addons"
+                subprocess.run(['git', 'clone', '--depth', '1', repo_url, kodi_path],
+                             capture_output=True)
+        
+        # 2. Vérifier si Kodi est présent
+        hosters_path = os.path.join(kodi_path, 'resources', 'hosters')
+        if not os.path.exists(hosters_path):
+            print("❌ Dossier hosters Kodi non trouvé")
+            return kodi_extractors
+        
+        # 3. Charger quelques extracteurs
+        sys.path.insert(0, hosters_path)
+        extractors_to_load = ['vidmoly', 'voe', 'streamtape', 'dood', 'mixdrop']
+        
+        for name in extractors_to_load:
+            try:
+                file_path = os.path.join(hosters_path, f'{name}.py')
+                if os.path.exists(file_path):
+                    spec = importlib.util.spec_from_file_location(name, file_path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    if hasattr(module, 'cHoster'):
+                        kodi_extractors[name] = module.cHoster
+                        print(f"✅ Extracteur Kodi chargé: {name}")
+            except Exception as e:
+                print(f"⚠️  Erreur chargement {name}: {e}")
+                
+    except Exception as e:
+        print(f"⚠️  Setup Kodi échoué: {e}")
+    
+    return kodi_extractors
 
-@app.route('/api/animes', methods=['GET'])
-def api_get_animes():
-    category = request.args.get('category', 'news')
-    page = request.args.get('page', '1')
-    
-    category_urls = {
-        'news': BASE_URL,
-        'vf': BASE_URL + '/animes-vf/',
-        'vostfr': BASE_URL + '/animes-vostfr/',
-        'films': BASE_URL + '/films-vf-vostfr/'
-    }
-    
-    if category not in category_urls:
-        category = 'news'
-    
-    url = category_urls[category]
-    
-    if page != '1':
-        url = f"{url}page/{page}/"
-    
-    result = get_animes_from_page(url)
-    return jsonify(result)
+# Charger Kodi au démarrage
+KODI_EXTRACTORS = setup_kodi()
+HAS_KODI = len(KODI_EXTRACTORS) > 0
 
-@app.route('/api/search', methods=['GET'])
-def api_search():
-    query = request.args.get('q', '')
-    
-    if not query or len(query) < 2:
-        return jsonify({
+# ============ EXTRACTEUR ACTUEL (fallback) ============
+
+class CurrentExtractor:
+    """Ton extracteur actuel (simplifié)"""
+    def extract(self, url):
+        # ICI METS TON CODE D'EXTRACTION ACTUEL
+        # (celui qui marche déjà)
+        from urllib.parse import urlparse
+        import re
+        import requests
+        
+        if 'vidmoly' in url:
+            # Pattern Kodi-like pour Vidmoly
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Referer': 'https://vidmoly.net/'
+                }
+                r = requests.get(url, headers=headers, timeout=10)
+                
+                # Pattern similaire à Kodi
+                pattern = r'sources:\s*\[\{file:"([^"]+)"'
+                match = re.search(pattern, r.text)
+                
+                if match:
+                    video_url = match.group(1)
+                    return {
+                        'success': True,
+                        'url': video_url,
+                        'extractor': 'current_vidmoly',
+                        'headers': {
+                            'Referer': f'https://{urlparse(url).netloc}',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                    }
+            except Exception as e:
+                pass
+        
+        # Fallback pour autres hébergeurs
+        return {
             'success': False,
-            'error': 'La recherche doit contenir au moins 2 caractères',
-            'query': query,
-            'results': []
-        }), 400
-    
-    search_url = f"{BASE_URL}?do=search&mode=advanced&subaction=search&story={query}"
-    result = get_animes_from_page(search_url)
-    return jsonify(result)
-
-@app.route('/api/anime/details', methods=['GET'])
-def api_anime_details():
-    anime_url = request.args.get('url', '')
-    
-    if not anime_url:
-        return jsonify({
-            'success': False,
-            'error': 'Le paramètre "url" est requis'
-        }), 400
-    
-    result = get_episodes_from_anime(anime_url)
-    return jsonify(result)
-
-@app.route('/api/genres', methods=['GET'])
-def api_get_genres():
-    result = get_genres_from_page(BASE_URL)
-    return jsonify(result)
-
-# ============ ROUTES EXTRACTION (nouvelles) ============
-
-@app.route('/api/extract', methods=['GET'])
-def api_extract_video():
-    """
-    Route principale d'extraction (Kodi-compatible)
-    Usage: /api/extract?url=URL_VIDMOLY
-    """
-    embed_url = request.args.get('url', '')
-    
-    if not embed_url:
-        return jsonify({
-            'success': False,
-            'error': 'Paramètre "url" manquant'
-        }), 400
-    
-    # Utiliser notre extracteur Kodi
-    result = extract_video_url(embed_url)
-    return jsonify(result)
-
-@app.route('/api/extract/kodi', methods=['GET'])
-def api_extract_kodi():
-    """
-    Extraction EXACTEMENT comme Kodi
-    Usage: /api/extract/kodi?url=URL_VIDMOLY
-    """
-    embed_url = request.args.get('url', '')
-    
-    if not embed_url:
-        return jsonify({'success': False, 'error': 'URL manquante'}), 400
-    
-    # Utiliser l'extracteur Kodi exact
-    extractor = KodiVidmolyExtractor()
-    result = extractor.extract(embed_url)
-    
-    return jsonify(result)
-
-@app.route('/api/extract/test', methods=['GET'])
-def api_extract_test():
-    """
-    Test avec URL exemple Vidmoly
-    """
-    test_url = "https://vidmoly.net/embed-9itb8l2nsinl.html"
-    custom_url = request.args.get('url', test_url)
-    
-    extractor = KodiVidmolyExtractor()
-    can_extract = extractor.can_extract(custom_url)
-    result = extractor.extract(custom_url)
-    
-    return jsonify({
-        'test': True,
-        'url': custom_url,
-        'can_extract': can_extract,
-        'result': result,
-        'kodi_notes': {
-            'pattern_used': 'sources: *[{file:"([^"]+)"',
-            'cleaning_applied': 'replace(",", ""), replace(".urlset", "")',
-            'referer_format': 'url + "|Referer=" + hostname'
+            'error': 'Extraction non supportée',
+            'extractor': 'current'
         }
-    })
 
-@app.route('/api/extract/debug', methods=['GET'])
-def api_extract_debug():
-    """
-    Debug complet de l'extraction
-    """
-    url = request.args.get('url', '')
-    
-    if not url:
-        return jsonify({'error': 'URL requise'}), 400
-    
-    factory = ExtractorFactory()
-    extractor = factory.get_extractor(url)
-    
-    debug_info = {
-        'input_url': url,
-        'extractor_selected': extractor.__class__.__name__,
-        'can_extract': extractor.can_extract(url),
-        'is_vidmoly': 'vidmoly' in url.lower(),
-        'url_analysis': {
-            'has_embed': 'embed' in url.lower(),
-            'is_html': url.lower().endswith('.html'),
-            'domain': urlparse(url).netloc if '://' in url else 'N/A'
+current_extractor = CurrentExtractor()
+
+# ============ EXTRACTEUR KODI DIRECT ============
+
+def extract_with_kodi(url):
+    """Utilise les vrais extracteurs Kodi"""
+    try:
+        url_lower = url.lower()
+        
+        # Mapping URLs → extracteurs Kodi
+        mapping = {
+            'vidmoly': 'vidmoly',
+            'voe.sx': 'voe',
+            'streamtape': 'streamtape',
+            'dood': 'dood',
+            'mixdrop': 'mixdrop',
+            'filelions': 'filelions'
         }
-    }
+        
+        # Trouver le bon extracteur
+        extractor_name = None
+        for key, name in mapping.items():
+            if key in url_lower:
+                extractor_name = name
+                break
+        
+        if not extractor_name or extractor_name not in KODI_EXTRACTORS:
+            return None
+        
+        # Utiliser l'extracteur Kodi
+        extractor_class = KODI_EXTRACTORS[extractor_name]
+        extractor = extractor_class()
+        extractor._url = url
+        
+        if hasattr(extractor, '_getMediaLinkForGuest'):
+            success, result = extractor._getMediaLinkForGuest()
+            
+            if success:
+                # Format Kodi: "url|Referer=hostname"
+                if isinstance(result, str) and '|Referer=' in result:
+                    video_url, referer_part = result.split('|Referer=', 1)
+                    referer = f"https://{referer_part}"
+                else:
+                    video_url = result
+                    referer = f"https://{urlparse(url).netloc}"
+                
+                return {
+                    'success': True,
+                    'url': video_url,
+                    'kodi_result': result,
+                    'extractor': f'kodi_{extractor_name}',
+                    'headers': {
+                        'Referer': referer,
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    }
+                }
+                
+    except Exception as e:
+        print(f"❌ Erreur extraction Kodi: {e}")
     
-    # Extraction
-    result = extractor.extract(url)
-    debug_info['extraction_result'] = result
-    
-    return jsonify(debug_info)
+    return None
 
-# ============ VÉRIFICATION KODI (nouveau) ============
-
-@app.route('/check-kodi')
-def check_kodi():
-    import os
-    path = os.path.join(os.path.dirname(__file__), 'kodi-addons')
-    exists = os.path.exists(path)
-    return {
-        'kodi_addons_exists': exists,
-        'path': path,
-        'files': os.listdir(path) if exists else []
-    }
-
-# ============ HEALTH CHECK ============
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    return jsonify({
-        'status': 'online',
-        'service': 'anime-api-kodi',
-        'version': '4.0',
-        'base_url': BASE_URL,
-        'features': ['scraping', 'kodi_exact_extraction', 'vidmoly_support'],
-        'extractors': ['KodiVidmolyExtractor', 'DirectExtractor'],
-        'kodi_compatibility': '100% avec vidmoly.py de Kodi'
-    })
+# ============ ROUTES ============
 
 @app.route('/')
 def home():
     return jsonify({
-        'api': 'Anime Scraper avec extraction Kodi-exact',
-        'description': 'API compatible avec le code original de Kodi vStream',
-        'endpoints': {
-            '/api/animes': 'Animés par catégorie (category, page)',
-            '/api/search': 'Recherche (q)',
-            '/api/anime/details': 'Détails anime (url)',
-            '/api/extract': 'Extraction vidéo Kodi (url)',
-            '/api/extract/kodi': 'Extraction exacte Kodi (url)',
-            '/api/extract/test': 'Test extraction (url optionnel)',
-            '/api/extract/debug': 'Debug extraction (url)',
-            '/api/genres': 'Genres disponibles',
-            '/check-kodi': 'Vérifie si Kodi est installé (nouveau)',
-            '/api/health': 'Statut API'
+        'api': 'Extracteur Vidéo',
+        'status': 'online',
+        'features': {
+            'kodi_available': HAS_KODI,
+            'kodi_extractors': list(KODI_EXTRACTORS.keys()) if HAS_KODI else [],
+            'extractors': ['current', 'kodi_direct']
         },
-        'examples': {
-            'extraction': '/api/extract?url=https://vidmoly.net/embed-xxx',
-            'kodi_exact': '/api/extract/kodi?url=https://vidmoly.net/embed-xxx',
-            'debug': '/api/extract/debug?url=https://vidmoly.net/embed-xxx',
-            'check_kodi': '/check-kodi'
+        'endpoints': {
+            '/extract': 'Extraction intelligente (Kodi si disponible)',
+            '/extract/kodi': 'Forcer extraction Kodi',
+            '/extract/current': 'Forcer extracteur actuel',
+            '/check': 'Vérifier état',
+            '/check-kodi': 'Vérifier Kodi'
         }
     })
 
-# Fonction utilitaire pour urlparse
+@app.route('/extract', methods=['GET'])
+def extract():
+    """Extraction intelligente : essaie Kodi d'abord, puis fallback"""
+    url = request.args.get('url', '')
+    
+    if not url:
+        return jsonify({'success': False, 'error': 'URL manquante'}), 400
+    
+    # 1. Essayer Kodi si disponible
+    if HAS_KODI:
+        kodi_result = extract_with_kodi(url)
+        if kodi_result and kodi_result.get('success'):
+            kodi_result['method'] = 'kodi_primary'
+            return jsonify(kodi_result)
+    
+    # 2. Fallback: extracteur actuel
+    result = current_extractor.extract(url)
+    result['method'] = 'current_fallback'
+    result['kodi_available'] = HAS_KODI
+    
+    return jsonify(result)
+
+@app.route('/extract/kodi', methods=['GET'])
+def extract_kodi_only():
+    """Forcer l'utilisation de Kodi"""
+    url = request.args.get('url', '')
+    
+    if not url:
+        return jsonify({'success': False, 'error': 'URL manquante'}), 400
+    
+    if not HAS_KODI:
+        return jsonify({
+            'success': False,
+            'error': 'Kodi non disponible',
+            'kodi_available': False
+        }), 503
+    
+    result = extract_with_kodi(url)
+    
+    if result:
+        return jsonify(result)
+    else:
+        return jsonify({
+            'success': False,
+            'error': 'Kodi a échoué ou extracteur non trouvé',
+            'kodi_extractors': list(KODI_EXTRACTORS.keys())
+        }), 404
+
+@app.route('/extract/current', methods=['GET'])
+def extract_current():
+    """Forcer l'utilisation de l'extracteur actuel"""
+    url = request.args.get('url', '')
+    
+    if not url:
+        return jsonify({'success': False, 'error': 'URL manquante'}), 400
+    
+    result = current_extractor.extract(url)
+    result['method'] = 'current_forced'
+    
+    return jsonify(result)
+
+@app.route('/check')
+def check():
+    """Vérifier l'état de l'API"""
+    return jsonify({
+        'status': 'online',
+        'kodi': {
+            'available': HAS_KODI,
+            'extractors_loaded': list(KODI_EXTRACTORS.keys()) if HAS_KODI else [],
+            'count': len(KODI_EXTRACTORS)
+        },
+        'extractors': {
+            'current': 'available',
+            'kodi': 'available' if HAS_KODI else 'unavailable'
+        }
+    })
+
+@app.route('/check-kodi')
+def check_kodi():
+    """Vérifier Kodi spécifiquement"""
+    path = os.path.join(os.path.dirname(__file__), 'kodi-addons')
+    exists = os.path.exists(path)
+    
+    return jsonify({
+        'kodi_addons_exists': exists,
+        'path': path,
+        'has_kodi_extractors': HAS_KODI,
+        'extractors': list(KODI_EXTRACTORS.keys()) if HAS_KODI else [],
+        'files': os.listdir(path) if exists else []
+    })
+
+# ============ DÉMARRAGE ============
+
 def urlparse(url):
     from urllib.parse import urlparse as parse_url
     return parse_url(url)
 
 if __name__ == '__main__':
-    print("🚀 API Anime Kodi-exact démarrée")
-    print("🔧 Extracteur principal: KodiVidmolyExtractor")
-    print("📖 Pattern Kodi: sources: *[{file:\"([^\"]+)\"")
-    print("🔗 Test: /api/extract/test")
+    print("=" * 50)
+    print("🚀 API Extracteur Vidéo")
+    print(f"✅ Kodi disponible: {HAS_KODI}")
+    if HAS_KODI:
+        print(f"📦 Extracteurs Kodi: {list(KODI_EXTRACTORS.keys())}")
+    print("🌐 Endpoints:")
+    print("   /extract?url=URL → Extraction intelligente")
+    print("   /extract/kodi?url=URL → Kodi uniquement")
+    print("   /extract/current?url=URL → Extracteur actuel")
+    print("   /check → État API")
+    print("=" * 50)
+    
     app.run(debug=True, host='0.0.0.0', port=5000)
